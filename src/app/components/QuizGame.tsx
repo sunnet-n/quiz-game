@@ -20,13 +20,14 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
   const [result, setResult] = useState<{ isCorrect: boolean; points: number } | null>(null);
-  const [timeLeft, setTimeLeft] = useState(20);
+  const [timeLeft, setTimeLeft] = useState(15); // Changed to 15 seconds
   const [startTime, setStartTime] = useState(Date.now());
   const [score, setScore] = useState(0);
   const [questionNumber, setQuestionNumber] = useState(1);
   const [isLoadingNext, setIsLoadingNext] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [autoAdvanceTimer, setAutoAdvanceTimer] = useState<NodeJS.Timeout | null>(null);
+  const [correctAnswerIndex, setCorrectAnswerIndex] = useState<number | null>(null);
 
   const fetchQuestion = async (retries = 3) => {
     try {
@@ -36,8 +37,9 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
       setSelectedAnswer(null);
       setHasAnswered(false);
       setResult(null);
-      setTimeLeft(20);
+      setTimeLeft(15); // Changed to 15 seconds
       setStartTime(Date.now());
+      setCorrectAnswerIndex(null);
       setIsLoading(false);
     } catch (error: any) {
       console.error('Failed to fetch question:', error);
@@ -113,14 +115,18 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
       const data = await api.submitAnswer(roomCode, playerId, -1, timeSpent);
       setResult({ isCorrect: false, points: 0 });
       setScore((prev) => prev + data.points);
+      setCorrectAnswerIndex(data.correctAnswer); // Show correct answer
       
-      // Auto-advance after 3 seconds for host
-      if (isHost) {
-        const timer = setTimeout(() => {
+      // Auto-advance after 3 seconds for ALL players
+      const timer = setTimeout(() => {
+        if (isHost) {
           handleNextQuestion();
-        }, 3000);
-        setAutoAdvanceTimer(timer);
-      }
+        } else {
+          // Non-host players just advance locally after checking
+          advanceToNextQuestion();
+        }
+      }, 3000);
+      setAutoAdvanceTimer(timer);
     } catch (error: any) {
       console.error('Failed to submit timeout:', error);
     }
@@ -138,6 +144,11 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
       const data = await api.submitAnswer(roomCode, playerId, answerIndex, timeSpent);
       setResult({ isCorrect: data.isCorrect, points: data.points });
       setScore(data.updatedScore);
+      
+      // Show correct answer if user got it wrong
+      if (!data.isCorrect) {
+        setCorrectAnswerIndex(data.correctAnswer);
+      }
 
       if (data.isCorrect) {
         toast.success(`Correct! +${data.points} points`);
@@ -145,13 +156,16 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
         toast.error('Incorrect answer');
       }
       
-      // Auto-advance after 3 seconds for host
-      if (isHost) {
-        const timer = setTimeout(() => {
+      // Auto-advance after 3 seconds for ALL players
+      const timer = setTimeout(() => {
+        if (isHost) {
           handleNextQuestion();
-        }, 3000);
-        setAutoAdvanceTimer(timer);
-      }
+        } else {
+          // Non-host players just advance locally after checking
+          advanceToNextQuestion();
+        }
+      }, 3000);
+      setAutoAdvanceTimer(timer);
     } catch (error: any) {
       toast.error(error.message || 'Failed to submit answer');
     }
@@ -176,6 +190,12 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
     }
   };
 
+  const advanceToNextQuestion = async () => {
+    // For non-host players, just fetch the next question
+    setQuestionNumber((prev) => prev + 1);
+    await fetchQuestion();
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500">
@@ -192,7 +212,7 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
     );
   }
 
-  const progressPercent = (timeLeft / 20) * 100;
+  const progressPercent = (timeLeft / 15) * 100; // Changed to 15 seconds
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500 p-4">
@@ -237,6 +257,7 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
           <CardContent className="space-y-3">
             {question.options.map((option: string, index: number) => {
               const isSelected = selectedAnswer === index;
+              const isCorrectAnswer = correctAnswerIndex === index;
               const showResult = hasAnswered && isSelected;
               
               return (
@@ -253,12 +274,16 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
                         ? 'bg-green-500 hover:bg-green-600 text-white'
                         : isSelected && !result?.isCorrect
                         ? 'bg-red-500 hover:bg-red-600 text-white'
+                        : isCorrectAnswer && hasAnswered
+                        ? 'bg-green-500 hover:bg-green-600 text-white border-4 border-green-700'
                         : 'bg-white hover:bg-gray-50 text-gray-900 border-2'
                     }`}
-                    variant={isSelected ? 'default' : 'outline'}
+                    variant={isSelected || isCorrectAnswer ? 'default' : 'outline'}
                   >
                     <span className="flex items-center gap-3 w-full">
-                      <span className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center font-bold">
+                      <span className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                        isSelected || isCorrectAnswer ? 'bg-white bg-opacity-30' : 'bg-gray-200'
+                      }`}>
                         {String.fromCharCode(65 + index)}
                       </span>
                       <span className="flex-1">{option}</span>
@@ -267,6 +292,9 @@ export function QuizGame({ roomCode, playerId, isHost, onGameFinish }: QuizGameP
                       )}
                       {showResult && !result?.isCorrect && (
                         <XCircle className="w-6 h-6 flex-shrink-0" />
+                      )}
+                      {isCorrectAnswer && hasAnswered && !isSelected && (
+                        <CheckCircle2 className="w-6 h-6 flex-shrink-0" />
                       )}
                     </span>
                   </Button>

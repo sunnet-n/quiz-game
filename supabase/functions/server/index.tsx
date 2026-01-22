@@ -411,7 +411,12 @@ app.post("/make-server-a62b2010/rooms/:code/answer", async (c) => {
     
     await kv.set(`room:${roomCode}:answer:${room.currentQuestion}:${playerId}`, answerData);
     
-    return c.json({ isCorrect, points, updatedScore: player.score });
+    return c.json({ 
+      isCorrect, 
+      points, 
+      updatedScore: player.score,
+      correctAnswer: question.correctAnswer // Return correct answer index
+    });
   } catch (error) {
     console.error("Error submitting answer:", error);
     return c.json({ error: "Failed to submit answer: " + error.message }, 500);
