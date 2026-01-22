@@ -4,6 +4,35 @@ import { logger } from "npm:hono/logger";
 import * as kv from "./kv_store.tsx";
 const app = new Hono();
 
+// Retry utility function with exponential backoff
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  initialDelay = 500
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      // If it's the last retry, throw the error
+      if (i === maxRetries - 1) {
+        throw error;
+      }
+      
+      // Wait with exponential backoff
+      const delay = initialDelay * Math.pow(2, i);
+      console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms due to error:`, error.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError!;
+}
+
 // Enable logger
 app.use('*', logger(console.log));
 
@@ -25,6 +54,7 @@ app.get("/make-server-a62b2010/health", (c) => {
 });
 
 // Quiz questions data
+// To modify: Change the question text, options array, and correctAnswer index (0-3)
 const QUIZ_QUESTIONS = [
   {
     id: 1,
@@ -151,7 +181,7 @@ const QUIZ_QUESTIONS = [
     question: "Assertions",
     options: ["Sorular", "İddialar", "Cevaplar", "İtirazlar"],
     correctAnswer: 1,
-  }
+  },
 ];
 
 // Generate a unique room code
@@ -246,7 +276,7 @@ app.post("/make-server-a62b2010/rooms/join", async (c) => {
 app.get("/make-server-a62b2010/rooms/:code", async (c) => {
   try {
     const roomCode = c.req.param("code").toUpperCase();
-    const room = await kv.get(`room:${roomCode}`);
+    const room = await retryWithBackoff(() => kv.get(`room:${roomCode}`));
     
     if (!room) {
       return c.json({ error: "Room not found" }, 404);
@@ -263,7 +293,7 @@ app.get("/make-server-a62b2010/rooms/:code", async (c) => {
 app.get("/make-server-a62b2010/rooms/:code/players", async (c) => {
   try {
     const roomCode = c.req.param("code").toUpperCase();
-    const players = await kv.getByPrefix(`room:${roomCode}:player:`);
+    const players = await retryWithBackoff(() => kv.getByPrefix(`room:${roomCode}:player:`));
     
     return c.json({ players: players || [] });
   } catch (error) {
